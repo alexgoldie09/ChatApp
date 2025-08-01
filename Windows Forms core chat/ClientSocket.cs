@@ -1,4 +1,4 @@
-﻿/*
+﻿ /*
  * ClientSocket.cs
  * ----------------------------------------------------------
  * Represents an individual client socket in the chat system.
@@ -21,17 +21,29 @@ using System.Text;
 
 namespace Windows_Forms_Chat
 {
+    // Defines possible states a client can be in.
+    public enum ClientState
+    {
+        Login,      // Just connected, must login/register
+        Chatting,   // Authenticated, normal chat
+        Playing     // Actively in TicTacToe game
+    }
+
     public class ClientSocket
     {
-        // The actual socket instance used for communication (TCP stream)
-        public Socket socket;
-        // The fixed buffer size for incoming data from this socket
         public const int BUFFER_SIZE = 2048;
-        // The byte buffer used to store received data before processing
         public byte[] buffer = new byte[BUFFER_SIZE];
-        // The username of the connected client (assigned by client commands)
-        public string Username { get; set; } = null;
-        // Determines if this client socket is a moderator or not (used for client commands)
-        public bool IsModerator = false;
+        public Socket socket;
+
+        // Authentication
+        public string Username { get; set; } = string.Empty;
+        public string Password { get; set; } = string.Empty;   // Store until login success
+
+        // State management
+        public ClientState State { get; set; } = ClientState.Login;
+        public int PlayerNumber { get; set; } = 0; // 0 = not playing, 1 = Player1, 2 = Player2
+
+        // Permissions
+        public bool IsModerator { get; set; } = false;
     }
 }

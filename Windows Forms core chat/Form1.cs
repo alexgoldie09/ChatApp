@@ -125,24 +125,12 @@ namespace Windows_Forms_Chat
                     if (client == null)
                         throw new Exception("Incorrect port value!");
 
-                    // Register callback for rejected usernames
-                    client.OnUsernameRejected = () =>
-                    {
-                        Invoke(new Action(() =>
-                        {
-                            ChatTextBox.AppendText("Please try a different username." + Environment.NewLine);
-                            JoinButton.Enabled = true;
-                            HostButton.Enabled = true;
-                            SendButton.Enabled = true;
-                            client = null; // Reset for retry
-                        }));
-                    };
-
                     // Register callback if unable to connect to the server
                     client.OnConnectionFailed = () =>
                     {
                         Invoke(new Action(() =>
                         {
+                            ChatTextBox.AppendText("[Client]: Connection to server failed. Please try again." + Environment.NewLine);
                             JoinButton.Enabled = true;
                             HostButton.Enabled = true;
                             SendButton.Enabled = true;
@@ -152,6 +140,7 @@ namespace Windows_Forms_Chat
 
                     // Start connection attempt
                     client.ConnectToServer(JoinButton, HostButton, SendButton);
+
                 }
                 catch (Exception ex)
                 {
@@ -160,6 +149,7 @@ namespace Windows_Forms_Chat
                 }
             }
         }
+
 
         // Handles Send button click (send typed message)
         private void SendButton_Click(object sender, EventArgs e)
@@ -170,25 +160,28 @@ namespace Windows_Forms_Chat
             if (server != null)
             {
                 // --- Host-only commands ---
-                if (message.StartsWith("!mod "))
+                if (message.StartsWith("!mod ", StringComparison.OrdinalIgnoreCase))
                 {
                     string modTarget = message.Substring(5).Trim();
-                    ClientSocket target = server.clientSockets.Find(c => c.Username == modTarget);
+                    string targetLower = modTarget.ToLowerInvariant();
+
+                    ClientSocket target = server.clientSockets.Find(c =>
+                        !string.IsNullOrEmpty(c.Username) &&
+                        c.Username.ToLowerInvariant() == targetLower);
 
                     if (target != null)
                     {
                         target.IsModerator = !target.IsModerator;
                         string status = target.IsModerator ? "promoted to moderator" : "demoted to regular user";
-                        // Show confirmation ONLY to host UI
-                        ChatTextBox.AppendText($"[Host -> {modTarget}]: You have been {status}" + Environment.NewLine);
 
-                        // Send private message to the mod user only
+                        ChatTextBox.AppendText($"[Server -> {target.Username}]: You have been {status}" + Environment.NewLine);
+
                         string privateNote = $"[Server Notice]: You have been {status}";
                         target.socket.Send(Encoding.UTF8.GetBytes(privateNote));
                     }
                     else
                     {
-                        ChatTextBox.AppendText($"[Host]: User '{modTarget}' not found." + Environment.NewLine);
+                        ChatTextBox.AppendText($"[Server]: User '{modTarget}' not found." + Environment.NewLine);
                     }
                     TypeTextBox.Clear();
                     return;
@@ -207,23 +200,42 @@ namespace Windows_Forms_Chat
                         }
                     }
                     if (!hasMods) modList.Append(" (none)");
-                    // Print ONLY to server UI, no SendToAll
-                    ChatTextBox.AppendText($"[Host]: {modList}" + Environment.NewLine);
+                    ChatTextBox.AppendText($"[Server]: {modList}" + Environment.NewLine);
                     TypeTextBox.Clear();
                     return;
                 }
-                if (message.StartsWith("!kick "))
+                else if (message == "!dbtest")
+                {
+                    try
+                    {
+                        bool ok = DatabaseManager.TestConnection();
+                        ChatTextBox.AppendText(ok
+                            ? "[Server]: Database connection successful." + Environment.NewLine
+                            : "[Server]: Database test failed." + Environment.NewLine);
+                    }
+                    catch (Exception ex)
+                    {
+                        ChatTextBox.AppendText("[Server Error]: Database test failed - " + ex.Message + Environment.NewLine);
+                    }
+                    TypeTextBox.Clear();
+                    return;
+                }
+                else if (message.StartsWith("!kick ", StringComparison.OrdinalIgnoreCase))
                 {
                     string targetName = message.Substring(6).Trim();
-                    var targetClient = server.clientSockets.Find(c => c.Username == targetName);
+                    string targetLower = targetName.ToLowerInvariant();
+
+                    var targetClient = server.clientSockets.Find(c =>
+                        !string.IsNullOrEmpty(c.Username) &&
+                        c.Username.ToLowerInvariant() == targetLower);
 
                     if (targetClient != null)
                     {
                         try
                         {
-                            targetClient.socket.Send(Encoding.UTF8.GetBytes("You have been kicked from the server by the host.\n"));
-                            server.SendToAll($"[{targetName}] was kicked from the server by [Host]\n", targetClient);
-                            ChatTextBox.AppendText($"[Host]: Kicked user {targetName}" + Environment.NewLine);
+                            targetClient.socket.Send(Encoding.UTF8.GetBytes("You have been kicked by the Server.\n"));
+                            server.SendToAll($"[{targetClient.Username}] was kicked by [Server]\n", targetClient);
+                            ChatTextBox.AppendText($"[Server]: Kicked user {targetClient.Username}" + Environment.NewLine);
 
                             targetClient.socket.Shutdown(SocketShutdown.Both);
                             targetClient.socket.Close();
@@ -231,39 +243,27 @@ namespace Windows_Forms_Chat
                         }
                         catch (Exception ex)
                         {
-                            ChatTextBox.AppendText($"[Host Error]: Failed to kick {targetName}. Reason: {ex.Message}" + Environment.NewLine);
+                            ChatTextBox.AppendText($"[Server Error]: Failed to kick {targetName}. Reason: {ex.Message}" + Environment.NewLine);
                         }
                     }
                     else
                     {
-                        ChatTextBox.AppendText($"[Host]: User '{targetName}' not found." + Environment.NewLine);
+                        ChatTextBox.AppendText($"[Server]: User '{targetName}' not found." + Environment.NewLine);
                     }
+                    TypeTextBox.Clear();
+                    return;
                 }
                 else
                 {
                     // Normal message broadcast
-                    ChatTextBox.AppendText($"[Host]: {message}" + Environment.NewLine);
-                    server.SendToAll($"[Host]: {message}", null);
+                    ChatTextBox.AppendText($"[Server]: {message}" + Environment.NewLine);
+                    server.SendToAll($"[Server]: {message}", null);
                 }
-
             }
             else if (client != null && client.socket.Connected)
             {
-                // Block any message that isn't an initial !username if username isn't yet set
-                if (string.IsNullOrWhiteSpace(client.username) && !message.StartsWith("!username "))
-                {
-                    ChatTextBox.AppendText("You must set a username first using !username YourName" + Environment.NewLine);
-                    return;
-                }
-
-                // Prevent !user command until username is accepted
-                if (!client.usernameAccepted && message.StartsWith("!user "))
-                {
-                    ChatTextBox.AppendText("You must wait until your username is accepted before changing it with !user." + Environment.NewLine);
-                    return;
-                }
-
-                // Send message normally
+                // No more username checks here —
+                // Server enforces Login/Register before allowing chat
                 client.SendString(message);
             }
 
