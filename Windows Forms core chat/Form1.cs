@@ -270,6 +270,37 @@ namespace Windows_Forms_Chat
             TypeTextBox.Clear(); // Clear message input box
         }
 
+        private void StartGameButton_Click(object sender, EventArgs e)
+        {
+            // block if we’re not connected or not Player 1
+            if (client == null || !client.socket.Connected || client.clientSocket.PlayerNumber != 1)
+                return;
+
+            // Only if both players are connected (DB-backed)
+            if (!GameStateManager.BothPlayersInGame())
+            {
+                client.AddToChat("[Server]: Both players must be present to start the game.\n");
+                return;
+            }
+
+            // All checks passed — initiate game
+            client.SendString("!startgame");
+            StartGameButton.Enabled = false;
+            SetGameBoardInteractable(true);  // Local buttons light up once server confirms
+        }
+
+
+        public void TryEnableStartButton()
+        {
+            // Both players must be present AND client must be one of them
+            if (client != null &&
+                client.clientSocket.State == ClientState.Playing && client.clientSocket.PlayerNumber == 1 &&
+                !StartGameButton.Enabled)
+            {
+                StartGameButton.Enabled = true;
+            }
+        }
+
         // Form loaded: setup TicTacToe UI buttons
         private void Form1_Load(object sender, EventArgs e)
         {
@@ -283,6 +314,8 @@ namespace Windows_Forms_Chat
             ticTacToe.buttons.Add(button8);
             ticTacToe.buttons.Add(button9);
 
+            SetGameBoardInteractable(false);
+
             // Listen for Enter key in the chat input field
             TypeTextBox.KeyDown += (s, ev) =>
             {
@@ -294,39 +327,30 @@ namespace Windows_Forms_Chat
             };
         }
 
+        // Enables or disables all board buttons
+        public void SetGameBoardInteractable(bool isEnabled)
+        {
+            foreach (var btn in ticTacToe.buttons)
+            {
+                btn.Enabled = isEnabled;
+                if (isEnabled)
+                {
+                    btn.BackColor = Color.Violet;
+                }
+                else
+                {
+                    btn.BackColor = Color.Gray;
+                }
+            }
+        }
+
         // Shared method for trying a TicTacToe move
         private void AttemptMove(int i)
         {
-            if (ticTacToe.myTurn)
+            if (ticTacToe.myTurn && client != null && client.socket.Connected)
             {
-                bool validMove = ticTacToe.SetTile(i, ticTacToe.playerTileType);
-                if (validMove)
-                {
-                    //tell server about it
-                    //ticTacToe.myTurn = false;//call this too when ready with server
-                }
-                //example, do something similar from server
-
-                // Check win/draw conditions
-                GameState gs = ticTacToe.GetGameState();
-                if (gs == GameState.crossWins)
-                {
-                    ChatTextBox.AppendText("X wins!");
-                    ChatTextBox.AppendText(Environment.NewLine);
-                    ticTacToe.ResetBoard();
-                }
-                if (gs == GameState.naughtWins)
-                {
-                    ChatTextBox.AppendText(") wins!");
-                    ChatTextBox.AppendText(Environment.NewLine);
-                    ticTacToe.ResetBoard();
-                }
-                if (gs == GameState.draw)
-                {
-                    ChatTextBox.AppendText("Draw!");
-                    ChatTextBox.AppendText(Environment.NewLine);
-                    ticTacToe.ResetBoard();
-                }
+                // Send move to server instead of applying locally
+                client.SendString($"!move {i}");
             }
         }
 

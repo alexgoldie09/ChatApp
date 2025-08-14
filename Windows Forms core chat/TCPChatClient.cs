@@ -24,6 +24,7 @@
 using System;
 using System.Net;
 using System.Net.Sockets;
+using System.Reflection.Metadata.Ecma335;
 using System.Text;
 using System.Threading;
 using System.Windows.Forms;
@@ -76,13 +77,17 @@ namespace Windows_Forms_Chat
             {
                 chatTextBox.Invoke(new Action(() =>
                 {
-                    chatTextBox.AppendText("[Client]: Disconnected from server." + Environment.NewLine);
+                    chatTextBox.AppendText("[Client]: Session Closed." + Environment.NewLine);
 
                     if (chatTextBox.FindForm() is Form1 form)
                     {
                         form.JoinButton.Enabled = true;
                         form.HostButton.Enabled = true;
                         form.SendButton.Enabled = false;
+                        form.StartGameButton.Enabled = false;
+                        form.ticTacToe.ResetBoard();
+                        form.ticTacToe.myTurn = false;
+                        form.SetGameBoardInteractable(false);
                         form.client = null;
                     }
                 }));
@@ -179,7 +184,7 @@ namespace Windows_Forms_Chat
             }
             catch (SocketException)
             {
-                AddToChat("[Client]: Forcefully disconnected!");
+                // AddToChat("[Client]: Forcefully disconnected!");
                 currentClientSocket.socket.Close();
                 OnDisconnected?.Invoke();
                 return;
@@ -201,63 +206,129 @@ namespace Windows_Forms_Chat
             Array.Copy(currentClientSocket.buffer, recBuf, received);
             string text = Encoding.UTF8.GetString(recBuf);
 
-            // --- Registration successful ---
-            if (text.StartsWith("Registration successful!"))
+            // Normalize once
+            string norm = text.Replace("\r\n", "\n").Trim();
+
+            // Small helper for UI invokes
+            var form = chatTextBox.FindForm() as Form1;
+            Action<Action> UI = a => { if (form != null) form.Invoke(new Action(a)); };
+
+            // --- Auth / gating messages ---
+            if (norm.StartsWith("Registration successful!", StringComparison.OrdinalIgnoreCase))
             {
                 usernameAccepted = true;
-                this.username = text.Replace("Registration successful! Welcome", "").Trim();
-
+                this.username = norm.Replace("Registration successful! Welcome", "", StringComparison.OrdinalIgnoreCase).Trim();
                 AddToChat($"[Client]: Registration successful! Welcome {username}");
             }
-            // --- Login successful ---
-            else if (text.StartsWith("Login successful!"))
+            else if (norm.StartsWith("Login successful!", StringComparison.OrdinalIgnoreCase))
             {
                 usernameAccepted = true;
-                this.username = text.Replace("Login successful! Welcome back", "").Trim();
-
+                this.username = norm.Replace("Login successful! Welcome back", "", StringComparison.OrdinalIgnoreCase).Trim();
                 AddToChat($"[Client]: Login successful! Welcome back {username}");
             }
-            // --- Registration failed (duplicate username) ---
-            else if (text.StartsWith("Registration failed"))
+            else if (norm.StartsWith("Registration failed", StringComparison.OrdinalIgnoreCase))
             {
                 usernameAccepted = false;
                 AddToChat("[Client]: Registration failed. Username may already exist. Please try again.");
             }
-            // --- Login failed (invalid creds) ---
-            else if (text.StartsWith("Login failed"))
+            else if (norm.StartsWith("Login failed", StringComparison.OrdinalIgnoreCase))
             {
                 usernameAccepted = false;
                 AddToChat("[Client]: Login failed. Invalid username or password.");
             }
-            // --- Must login/register first ---
-            else if (text.Contains("Please login or register first"))
+            else if (norm.IndexOf("Please login or register first", StringComparison.OrdinalIgnoreCase) >= 0)
             {
                 AddToChat("[Client]: Please login or register first using !login or !register.");
             }
-            // --- Player 1 ---
-            else if (text.StartsWith("!player1"))
+
+            // --- Player join announcements ---
+            else if (norm.StartsWith("!player1", StringComparison.OrdinalIgnoreCase))
             {
                 usernameAccepted = true;
                 clientSocket.State = ClientState.Playing;
-                clientSocket.PlayerNumber = 1;  // store role in ClientSocket
+                clientSocket.PlayerNumber = 1;
+                UI(() => form.ticTacToe.playerTileType = TileType.cross);
                 AddToChat("[Client]: You joined Tic-Tac-Toe as Player 1.");
+                UI(() => form.TryEnableStartButton());
             }
-            // --- Player 2 ---
-            else if (text.StartsWith("!player2"))
+            else if (norm.StartsWith("!player2", StringComparison.OrdinalIgnoreCase))
             {
                 usernameAccepted = true;
                 clientSocket.State = ClientState.Playing;
-                clientSocket.PlayerNumber = 2;  // store role in ClientSocket
+                clientSocket.PlayerNumber = 2;
+                UI(() => form.ticTacToe.playerTileType = TileType.naught);
                 AddToChat("[Client]: You joined Tic-Tac-Toe as Player 2.");
+                UI(() => form.TryEnableStartButton());
             }
-            // --- Self-message replacement ---
-            else if (!string.IsNullOrEmpty(username) && text.StartsWith($"[{username}]:"))
+
+            // --- Board updates / turn control ---
+            else if (norm.TrimStart().StartsWith("!settile", StringComparison.OrdinalIgnoreCase))
             {
-                AddToChat(text.Replace($"[{username}]:", "[Me]:"));
+                // Format: !settile 4 X
+                var parts = norm.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                if (parts.Length == 3 && int.TryParse(parts[1], out int tileIndex))
+                {
+                    TileType type = (parts[2].Equals("X", StringComparison.OrdinalIgnoreCase)) ? TileType.cross : TileType.naught;
+                    UI(() => form.ticTacToe.SetTile(tileIndex, type));
+                }
+            }
+            else if (norm.Equals("!yourturn", StringComparison.OrdinalIgnoreCase))
+            {
+                AddToChat("[Server]: Your turn...");
+                UI(() =>
+                {
+                    form.ticTacToe.myTurn = true;
+                    form.SetGameBoardInteractable(true);
+                });
+            }
+            else if (norm.Equals("!waitturn", StringComparison.OrdinalIgnoreCase))
+            {
+                AddToChat("[Server]: Opponent's turn...");
+                UI(() =>
+                {
+                    form.ticTacToe.myTurn = false;
+                    form.SetGameBoardInteractable(false);
+                });
+            }
+            else if (norm.Equals("!leavegame", StringComparison.OrdinalIgnoreCase))
+            {
+                // server is telling us we’re no longer a player
+                clientSocket.State = ClientState.Chatting;
+                clientSocket.PlayerNumber = 0;
+
+                // AddToChat("[Client]: You are returned to lobby. Resetting Board.");
+                UI(() =>
+                {
+                    form.ticTacToe.ResetBoard();
+                    form.ticTacToe.myTurn = false;
+                    form.SetGameBoardInteractable(false);
+                    form.StartGameButton.Enabled = false;
+                });
+            }
+            else if (norm.IndexOf("!resetboard", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                clientSocket.State = ClientState.Chatting;
+                clientSocket.PlayerNumber = 0;
+
+                AddToChat("[Server]: Players returned to lobby. Resetting Board!");
+                UI(() =>
+                {
+                    form.ticTacToe.ResetBoard();
+                    form.ticTacToe.myTurn = false;
+                    form.SetGameBoardInteractable(false);
+                    form.StartGameButton.Enabled = false;
+                });
+            }
+
+            // --- Self-message replacement ---
+            else if (!string.IsNullOrEmpty(username) &&
+                     norm.StartsWith($"[{username}]:", StringComparison.Ordinal))
+            {
+                AddToChat(norm.Replace($"[{username}]:", "[Me]:", StringComparison.Ordinal));
             }
             else
             {
-                AddToChat(text);
+                AddToChat(norm);
             }
 
             // Keep listening for more messages
@@ -275,17 +346,15 @@ namespace Windows_Forms_Chat
             if (hasDisconnected) return; // already handled
 
             hasDisconnected = true;
+
             try
             {
                 if (socket != null && socket.Connected)
+                {
                     socket.Shutdown(SocketShutdown.Both);
+                }
             }
             catch { }
-            finally
-            {
-                try { socket?.Close(); } catch { }
-                OnDisconnected?.Invoke();
-            }
         }
     }
 }

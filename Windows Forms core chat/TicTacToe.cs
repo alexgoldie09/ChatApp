@@ -25,29 +25,45 @@ namespace Windows_Forms_Chat
 
         public string GridToString()
         {
-            string s = "";
-            //TODO convert values on board to a string e.g "xox___x_o"
-
-            return s;
+            var sb = new StringBuilder(9);
+            for (int i = 0; i < 9; i++)
+            {
+                sb.Append(grid[i] == TileType.blank ? '_'
+                          : grid[i] == TileType.cross ? 'x' : 'o');
+            }
+            return sb.ToString();
         }
+
         public void StringToGrid(string s)
         {
-            //TODO take string s e.g "xox___x_o" and use its values to update grid and the buttons
+            if (string.IsNullOrEmpty(s) || s.Length != 9) return;
+            for (int i = 0; i < 9; i++)
+            {
+                char c = char.ToLowerInvariant(s[i]);
+                grid[i] = c == 'x' ? TileType.cross
+                        : c == 'o' ? TileType.naught
+                        : TileType.blank;
+
+                if (buttons.Count >= 9)
+                    buttons[i].Text = TileTypeToString(grid[i]);
+            }
         }
 
         public bool SetTile(int index, TileType tileType)
         {
-            if(grid[index] == TileType.blank)
+            if (index < 0 || index > 8) return false;
+            if (tileType == TileType.blank) return false;
+
+            if (grid[index] == TileType.blank)
             {
                 grid[index] = tileType;
                 if (buttons.Count >= 9)
                     buttons[index].Text = TileTypeToString(tileType);
                 return true;
             }
-            //else
 
-            return true;
-
+            // was returning true even when occupied — fix to false
+            return false;
         }
 
         public GameState GetGameState()
