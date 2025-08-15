@@ -1,16 +1,26 @@
-# TCP Chat Server
+# TCP Chat + Tic-Tac-Toe Game  
 
-A multiclient TCP chat server written in C#. This project demonstrates socket-based networking using asynchronous communication patterns, allowing multiple clients to connect, chat, and interact via commands in real-time.
+A multiclient TCP chat server written in C# with an integrated Tic-Tac-Toe game. This project demonstrates asynchronous socket-based networking, database persistence for player scores, and a synchronized multiplayer game experience — all within a Windows Forms UI.  
 
-## 🚀 Features
+## 🚀 Features  
 
-- Host a TCP chat server on a specified port.
-- Supports multiple clients with unique usernames.
-- Private messaging via `!whisper`.
-- Moderator-based kicking system (`!kick`).
-- Command list with `!commands`, `!who`, `!about`, and `!roll`.
-- Socket-based networking using `System.Net.Sockets`.
-- UI output via `System.Windows.Forms.TextBox`.
+- **Multiplayer Chat System**  
+  - Host or join a TCP chat server on a specified port.  
+  - Multiple clients with unique usernames and passwords.  
+  - Private messaging with `!whisper`.  
+  - Moderator system with `!kick` functionality.  
+  - Rich command list for both chat and game control.  
+
+- **Tic-Tac-Toe Game Integration**  
+  - Play Tic-Tac-Toe directly in the client form.  
+  - Board updates synchronized in real-time between players.  
+  - Game state stored in a persistent SQLite database.  
+  - Automatic win/loss/draw tracking.  
+  - Colour-coded board state (violet = active game, grey = inactive).  
+
+- **Score Tracking**  
+  - `!scores` command displays all players’ wins, losses, and draws.  
+  - Scores are sorted from highest wins to lowest.  
 
 ## 🛠️ How to Run
 
@@ -26,8 +36,9 @@ A multiclient TCP chat server written in C#. This project demonstrates socket-ba
 
 Server can:
 
-- Send message to all clients.
-- Receive feedback and display messages from client usage.
+- Send global chat messages.  
+- Manage moderators.  
+- Kick players.
 - Uses supported commands to interact with others.
 
 ### 🛠️ Host-Only Commands
@@ -48,30 +59,53 @@ Server can:
 
 Each client must:
 
-- Send `!username YourName` upon connection.
-- Uses supported commands to interact with others.
+- Send `!login YourUsername YourPassword` or `!register YourUsername YourPassword` upon connection.
+- Enter lobby and chat using supported commands to interact with others,
+- Or, `!join` a game to enter a game session.
 
 ### 💬 Client Commands
 
 | Command                    | Description                                                              |
 |----------------------------|--------------------------------------------------------------------------|
-| `!username Alex`           | Sets your initial username (must be unique).                             |
-| `!user Alex2`              | Changes your username mid-session.                                       |
-| `!who`                     | Lists all currently connected users.                                     |
-| `!commands`                | Displays a list of available commands.                                   |
-| `!about`                   | Shows version and author information.                                    |
-| `!whisper Bob Hello!`      | Sends a private message to user "Bob".                                   |
-| `!whisper "Bob Smith" Hi`  | Sends a private message to users with multi-word usernames.              |
-| `!roll` or `!roll 100`     | Rolls a random number between 1–6 (or up to 100 if specified).           |
-| `!kick Alex`               | (Moderator only) Kicks the user "Alex" from the server.                  |
-| `!exit`                    | Disconnects you from the chat server.                                    |
+| `!user Alex2`              | Changes your username mid-session (must be unique).                      |
+| `!who`                     | Lists all connected users.                                               |
+| `!commands`                | Lists available commands.                                                |
+| `!about`                   | Shows version and author info.                                           |
+| `!join`                    | Register to join a Tic-Tac-Toe session.                                  |
+| `!scores`                  | Shows all player scores sorted by wins (highest first).                  |
+| `!whisper Bob Hello!`      | Sends a private message to "Bob".                                        |
+| `!roll` or `!roll 100`     | Rolls a random number between 1–6 (or 1–100).                            |
+| `!kick Alex`               | (Moderator only) Kicks "Alex".                                           |
+| `!exit`                    | Disconnects from the server.                                             |
+
+---
+
+## 🎮 Game Commands  
+
+| Command                      | Description                                                              |
+|------------------------------|--------------------------------------------------------------------------|
+| `!startgame`                 | Starts a Tic-Tac-Toe match with another player.                          |
+| `!move Index X/O`            | Sets a tile (0–8 index) as X or O during your turn.                      |
+| `!exit`                      | Closes session and disconnects from the server.                          |
+
+---                            
 
 ## ⚠️ Notes
 
 - Only the host is a moderator by default.
 - Moderators cannot kick each other or themselves.
 - Duplicate usernames are not allowed.
-- The server uses non-blocking async sockets to allow smooth UI updates and multiple connections.
+
+---
+
+## ⚙️ Technical Details  
+
+- **Networking:** Asynchronous sockets via `System.Net.Sockets` for smooth UI updates.  
+- **Database:** SQLite integration for score persistence.  
+- **UI:** Windows Forms with live board updates.  
+- **Architecture:** Modular design with `TCPChatServer`, `TCPChatClient`, `TCPChatBase`, `GameStateManager`, `DatabaseManager`, and `TicTacToe`.  
+
+---
 
 ## 🔧 Requirements
 
@@ -88,6 +122,8 @@ Each client must:
 - Microsoft. (2024b). Socket Class (System.net.Sockets). Microsoft.com. https://learn.microsoft.com/en-us/dotnet/api/system.net.sockets.socket?view=net-9.0
 - Microsoft. (2024c, April 17). Use TcpClient and TcpListener - .NET. Microsoft.com. https://learn.microsoft.com/en-us/dotnet/fundamentals/networking/sockets/tcp-classes?source=recommendations
 - Microsoft. (2025, May 7). What is Windows Forms - Windows Forms. Microsoft.com. https://learn.microsoft.com/en-us/dotnet/desktop/winforms/overview/
+- Somani, S. (2022). Tic-Tac-Toe Game in C#. Www.c-Sharpcorner.com. https://www.c-sharpcorner.com/UploadFile/75a48f/tic-tac-toe-game-in-C-Sharp/
+- SQLite. (2019). SQLite Home Page. Sqlite.org. https://sqlite.org/
 
 ## 💡 License
 
