@@ -1,21 +1,22 @@
 ﻿/*
  * DatabaseManager.cs
  * ----------------------------------------------------------
- * Manages SQLite database connection and user table setup.
+ * Centralized SQLite access for authentication and game stats.
  *
  * Purpose:
- * - Provides centralized access to SQLite database logic.
- * - Ensures the Users table exists before the server starts accepting clients.
- * - Adds authentication helpers for login/register.
+ * - Create/open the app database and ensure the Users table exists.
+ * - Provide helpers for register/login/rename flows.
+ * - Track Tic-Tac-Toe results (Wins/Losses/Draws) and report leaderboards.
  *
  * Features:
- * - Creates/open a local SQLite database file (`chatapp.db`).
- * - Creates Users table if it does not exist, with schema:
- *      ID (PK), Username (case-insensitive UNIQUE), Password, Wins, Losses, Draws
- * - Enforces case-insensitive uniqueness while preserving chosen display casing.
+ * - Local SQLite file: chatapp.db
+ * - Users schema:
+ *      ID (PK), Username (UNIQUE, NOCASE), Password, Wins, Losses, Draws
+ * - Case-insensitive uniqueness while preserving display casing.
+ * - Simple stats API (increment/get) and a leaderboard getter.
  *
  * Dependencies:
- * - Requires System.Data.SQLite.Core NuGet package.
+ * - System.Data.SQLite.Core
  */
 
 using System;
@@ -32,20 +33,23 @@ namespace Windows_Forms_Chat
         private static readonly string connectionString = $"Data Source={dbFile};Version=3;";
         private static readonly string[] ReservedNames = { "host", "server", "admin", "moderator" };
 
+        #region Initialization & Schema
+        /// <summary>
+        /// Creates the database file (if needed) and ensures the Users table exists.
+        /// Throws on failure so the server can surface the error.
+        /// </summary>
         public static void Initialize()
         {
             try
             {
                 if (!File.Exists(dbFile))
-                {
                     SQLiteConnection.CreateFile(dbFile);
-                }
 
                 using (var connection = new SQLiteConnection(connectionString))
                 {
                     connection.Open();
 
-                    string createTableQuery = @"
+                    const string createTableQuery = @"
                         CREATE TABLE IF NOT EXISTS Users (
                             ID INTEGER PRIMARY KEY AUTOINCREMENT,
                             Username TEXT NOT NULL UNIQUE COLLATE NOCASE,
@@ -56,17 +60,19 @@ namespace Windows_Forms_Chat
                         );";
 
                     using (var command = new SQLiteCommand(createTableQuery, connection))
-                    {
                         command.ExecuteNonQuery();
-                    }
                 }
             }
             catch
             {
-                throw; // bubble up to server
+                // Bubble up to server
+                throw;
             }
         }
 
+        /// <summary>
+        /// Lightweight connectivity probe. Returns true if a connection opens successfully.
+        /// </summary>
         public static bool TestConnection()
         {
             try
@@ -82,8 +88,12 @@ namespace Windows_Forms_Chat
                 return false;
             }
         }
+        #endregion
 
-        // Validation rules
+        #region Validation
+        /// <summary>
+        /// Validates username format and reserved words.
+        /// </summary>
         public static bool ValidateUsername(string username, out string errorMessage)
         {
             errorMessage = "";
@@ -119,8 +129,12 @@ namespace Windows_Forms_Chat
 
             return true;
         }
+        #endregion
 
-        // Register
+        #region User Lifecycle (Register / Login / Rename)
+        /// <summary>
+        /// Attempts to register a new user. Returns false with errorMessage if name is invalid or taken.
+        /// </summary>
         public static bool TryRegister(string username, string password, out string errorMessage)
         {
             errorMessage = null;
@@ -135,7 +149,7 @@ namespace Windows_Forms_Chat
                 {
                     conn.Open();
 
-                    string insertSql = "INSERT INTO Users (Username, Password) VALUES (@u, @p)";
+                    const string insertSql = "INSERT INTO Users (Username, Password) VALUES (@u, @p)";
                     using (var cmd = new SQLiteCommand(insertSql, conn))
                     {
                         cmd.Parameters.AddWithValue("@u", display);
@@ -158,7 +172,9 @@ namespace Windows_Forms_Chat
             }
         }
 
-        // Login
+        /// <summary>
+        /// Attempts to log in. On success, returns the stored displayName (original casing).
+        /// </summary>
         public static bool TryLogin(string username, string password, out string errorMessage, out string displayName)
         {
             errorMessage = null;
@@ -170,7 +186,7 @@ namespace Windows_Forms_Chat
                 {
                     conn.Open();
 
-                    string sql = "SELECT Username, Password FROM Users WHERE Username = @u COLLATE NOCASE";
+                    const string sql = "SELECT Username, Password FROM Users WHERE Username = @u COLLATE NOCASE";
                     using (var cmd = new SQLiteCommand(sql, conn))
                     {
                         cmd.Parameters.AddWithValue("@u", username.Trim());
@@ -209,7 +225,9 @@ namespace Windows_Forms_Chat
             }
         }
 
-        // Rename
+        /// <summary>
+        /// Attempts to rename an existing user to a new, valid username.
+        /// </summary>
         public static bool TryUpdateUsername(string oldUsername, string newUsername, out string errorMessage)
         {
             errorMessage = null;
@@ -223,7 +241,7 @@ namespace Windows_Forms_Chat
                 {
                     conn.Open();
 
-                    string updateSql = "UPDATE Users SET Username = @new WHERE Username = @old COLLATE NOCASE";
+                    const string updateSql = "UPDATE Users SET Username = @new WHERE Username = @old COLLATE NOCASE";
                     using (var cmd = new SQLiteCommand(updateSql, conn))
                     {
                         cmd.Parameters.AddWithValue("@new", newUsername.Trim());
@@ -248,7 +266,10 @@ namespace Windows_Forms_Chat
                 return false;
             }
         }
+        #endregion
 
+        #region Stats API (Increment / Read)
+        /// <summary>Wins++ for a user (NOCASE match).</summary>
         public static void IncrementWins(string username)
         {
             using (var conn = new SQLiteConnection(connectionString))
@@ -262,6 +283,7 @@ namespace Windows_Forms_Chat
             }
         }
 
+        /// <summary>Losses++ for a user (NOCASE match).</summary>
         public static void IncrementLosses(string username)
         {
             using (var conn = new SQLiteConnection(connectionString))
@@ -275,6 +297,7 @@ namespace Windows_Forms_Chat
             }
         }
 
+        /// <summary>Draws++ for a user (NOCASE match).</summary>
         public static void IncrementDraws(string username)
         {
             using (var conn = new SQLiteConnection(connectionString))
@@ -288,6 +311,9 @@ namespace Windows_Forms_Chat
             }
         }
 
+        /// <summary>
+        /// Returns (Wins, Losses, Draws) for a given user. Returns (0,0,0) if not found.
+        /// </summary>
         public static (int wins, int losses, int draws) GetStats(string username)
         {
             using (var conn = new SQLiteConnection(connectionString))
@@ -310,8 +336,12 @@ namespace Windows_Forms_Chat
             }
             return (0, 0, 0);
         }
+        #endregion
 
-        // Get all player scores sorted by Wins (desc) then Draws (desc)
+        #region Leaderboard API
+        /// <summary>
+        /// Returns all user scores sorted by Wins desc, then Draws desc.
+        /// </summary>
         public static List<(string Username, int Wins, int Losses, int Draws)> GetAllScores()
         {
             var scores = new List<(string Username, int Wins, int Losses, int Draws)>();
@@ -319,7 +349,7 @@ namespace Windows_Forms_Chat
             using (var conn = new SQLiteConnection(connectionString))
             {
                 conn.Open();
-                string sql = "SELECT Username, Wins, Losses, Draws FROM Users ORDER BY Wins DESC, Draws DESC";
+                const string sql = "SELECT Username, Wins, Losses, Draws FROM Users ORDER BY Wins DESC, Draws DESC";
                 using (var cmd = new SQLiteCommand(sql, conn))
                 using (var reader = cmd.ExecuteReader())
                 {
@@ -337,5 +367,6 @@ namespace Windows_Forms_Chat
 
             return scores;
         }
+        #endregion
     }
 }

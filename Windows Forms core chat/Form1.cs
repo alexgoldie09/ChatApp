@@ -4,44 +4,29 @@
  * Main Windows Forms controller for the Chat & TicTacToe Application.
  *
  * Purpose:
- * - Acts as the entry point and controller for all UI-related functionality.
- * - Allows users to host or join a TCP-based chat session.
- * - Provides a basic turn-based Tic Tac Toe game embedded in the same window.
+ * - Entry point and controller for all UI functionality.
+ * - Hosts or joins a TCP-based chat session.
+ * - Surfaces game UI for Tic-Tac-Toe and relays moves to the server.
  *
  * Features:
- * - Hosting a TCP chat server on a user-defined port using TCPChatServer.
- * - Joining an existing server via TCPChatClient with live username negotiation.
- * - Live chat system with user-to-user and server-wide communication.
- * - Moderator controls (!mod, !mods, !kick) available to the host.
- * - Username management including initial setting (!username) and changes (!user).
- * - UI feedback on failed connections or rejected usernames.
- * - Graceful disconnection and rejoining support.
- * - Message sanitization and empty message checks.
- * - Chat input box supports Enter key submission.
- * - Embedded Tic Tac Toe game logic with win/draw/reset checks.
- * - Visual feedback and chat notifications for Tic Tac Toe game outcomes.
+ * - Host a TCP chat server via TCPChatServer.
+ * - Join an existing server via TCPChatClient.
+ * - Live chat with moderation tools (!mod, !mods, !kick) when hosting.
+ * - Authentication flow handled by server; client only relays commands.
+ * - Keyboard Enter to send messages.
+ * - Server-side Tic-Tac-Toe with local UI reflection and turn gating.
  *
  * Dependencies:
- * - TCPChatServer.cs: server-side socket handling and broadcast logic.
- * - TCPChatClient.cs: client-side connection and send logic.
- * - ClientSocket.cs: wrapper class for connected clients (username, socket, moderation).
- * - TicTacToe.cs: game logic and board state management for Tic Tac Toe.
+ * - TCPChatServer.cs, TCPChatClient.cs (networking and command logic)
+ * - ClientSocket.cs (socket + metadata)
+ * - TicTacToe.cs (board state + buttons)
  */
 
 
 using System;
-using System.Collections.Generic;
-using System.ComponentModel;
-using System.Data;
-using System.DirectoryServices.ActiveDirectory;
 using System.Drawing;
-using System.Linq;
-using System.Net;
 using System.Net.Sockets;
-using System.Runtime.Intrinsics.X86;
 using System.Text;
-using System.Threading;
-using System.Threading.Tasks;
 using System.Windows.Forms;
 
 
@@ -57,252 +42,15 @@ namespace Windows_Forms_Chat
         public TCPChatServer server = null;
         public TCPChatClient client = null;
 
+        #region Construction & Init
         public Form1()
         {
             InitializeComponent();
+            // mono font helps align columns (e.g., !scores output)
             ChatTextBox.Font = new Font("Consolas", ChatTextBox.Font.Size);
         }
 
-        // Checks if we can host or join (ensures we don’t have an active session)
-        public bool CanHostOrJoin()
-        {
-            return server == null && client == null;
-        }
-
-        // Handles Host button click
-        private void HostButton_Click(object sender, EventArgs e)
-        {
-            if (CanHostOrJoin())
-            {
-                try
-                {
-                    int port = int.Parse(MyPortTextBox.Text);
-                    server = TCPChatServer.createInstance(port, ChatTextBox);
-
-                    if (server == null)
-                        throw new Exception("Invalid port or chat UI reference.");
-
-                    server.SetupServer();
-
-                    // Disable Host/Join buttons; enable Send
-                    HostButton.Enabled = false;
-                    JoinButton.Enabled = false;
-                    SendButton.Enabled = true;
-                }
-                catch (SocketException ex)
-                {
-                    // Port in use or error; show message and allow retry
-                    server = null;
-                    HostButton.Enabled = true;
-                    JoinButton.Enabled = true;
-                    SendButton.Enabled = true;
-                    ChatTextBox.AppendText($"[Error]: Could not start server on port {MyPortTextBox.Text}.\n{ex.Message}" + Environment.NewLine);
-                }
-                catch (Exception ex)
-                {
-                    // Other exception
-                    server = null;
-                    HostButton.Enabled = true;
-                    JoinButton.Enabled = true;
-                    SendButton.Enabled = true;
-                    ChatTextBox.AppendText($"[Error]: {ex.Message}" + Environment.NewLine);
-                }
-            }
-        }
-
-        // Handles Join button click (connect to server)
-        private void JoinButton_Click(object sender, EventArgs e)
-        {
-            if (CanHostOrJoin())
-            {
-                try
-                {
-                    int port = int.Parse(MyPortTextBox.Text);
-                    int serverPort = int.Parse(serverPortTextBox.Text);
-
-                    // Create new client instance
-                    client = TCPChatClient.CreateInstance(port, serverPort, ServerIPTextBox.Text, ChatTextBox);
-
-                    if (client == null)
-                        throw new Exception("Incorrect port value!");
-
-                    // Register callback if unable to connect to the server
-                    client.OnConnectionFailed = () =>
-                    {
-                        Invoke(new Action(() =>
-                        {
-                            ChatTextBox.AppendText("[Client]: Connection to server failed. Please try again." + Environment.NewLine);
-                            JoinButton.Enabled = true;
-                            HostButton.Enabled = true;
-                            SendButton.Enabled = true;
-                            client = null; // Reset for retry
-                        }));
-                    };
-
-                    // Start connection attempt
-                    client.ConnectToServer(JoinButton, HostButton, SendButton);
-
-                }
-                catch (Exception ex)
-                {
-                    client = null;
-                    ChatTextBox.AppendText("Error: " + ex.Message + Environment.NewLine);
-                }
-            }
-        }
-
-
-        // Handles Send button click (send typed message)
-        private void SendButton_Click(object sender, EventArgs e)
-        {
-            string message = TypeTextBox.Text.Trim();
-            if (string.IsNullOrEmpty(message)) return;
-
-            if (server != null)
-            {
-                // --- Host-only commands ---
-                if (message.StartsWith("!mod ", StringComparison.OrdinalIgnoreCase))
-                {
-                    string modTarget = message.Substring(5).Trim();
-                    string targetLower = modTarget.ToLowerInvariant();
-
-                    ClientSocket target = server.clientSockets.Find(c =>
-                        !string.IsNullOrEmpty(c.Username) &&
-                        c.Username.ToLowerInvariant() == targetLower);
-
-                    if (target != null)
-                    {
-                        target.IsModerator = !target.IsModerator;
-                        string status = target.IsModerator ? "promoted to moderator" : "demoted to regular user";
-
-                        ChatTextBox.AppendText($"[Server -> {target.Username}]: You have been {status}" + Environment.NewLine);
-
-                        string privateNote = $"[Server Notice]: You have been {status}";
-                        target.socket.Send(Encoding.UTF8.GetBytes(privateNote));
-                    }
-                    else
-                    {
-                        ChatTextBox.AppendText($"[Server]: User '{modTarget}' not found." + Environment.NewLine);
-                    }
-                    TypeTextBox.Clear();
-                    return;
-                }
-                else if (message == "!mods")
-                {
-                    StringBuilder modList = new StringBuilder("Current moderators:");
-                    bool hasMods = false;
-                    foreach (var c in server.clientSockets)
-                    {
-                        if (c.IsModerator)
-                        {
-                            modList.Append(hasMods ? ", " : " ");
-                            modList.Append($"{c.Username}");
-                            hasMods = true;
-                        }
-                    }
-                    if (!hasMods) modList.Append(" (none)");
-                    ChatTextBox.AppendText($"[Server]: {modList}" + Environment.NewLine);
-                    TypeTextBox.Clear();
-                    return;
-                }
-                else if (message == "!dbtest")
-                {
-                    try
-                    {
-                        bool ok = DatabaseManager.TestConnection();
-                        ChatTextBox.AppendText(ok
-                            ? "[Server]: Database connection successful." + Environment.NewLine
-                            : "[Server]: Database test failed." + Environment.NewLine);
-                    }
-                    catch (Exception ex)
-                    {
-                        ChatTextBox.AppendText("[Server Error]: Database test failed - " + ex.Message + Environment.NewLine);
-                    }
-                    TypeTextBox.Clear();
-                    return;
-                }
-                else if (message.StartsWith("!kick ", StringComparison.OrdinalIgnoreCase))
-                {
-                    string targetName = message.Substring(6).Trim();
-                    string targetLower = targetName.ToLowerInvariant();
-
-                    var targetClient = server.clientSockets.Find(c =>
-                        !string.IsNullOrEmpty(c.Username) &&
-                        c.Username.ToLowerInvariant() == targetLower);
-
-                    if (targetClient != null)
-                    {
-                        try
-                        {
-                            targetClient.socket.Send(Encoding.UTF8.GetBytes("You have been kicked by the Server.\n"));
-                            server.SendToAll($"[{targetClient.Username}] was kicked by [Server]\n", targetClient);
-                            ChatTextBox.AppendText($"[Server]: Kicked user {targetClient.Username}" + Environment.NewLine);
-
-                            targetClient.socket.Shutdown(SocketShutdown.Both);
-                            targetClient.socket.Close();
-                            server.clientSockets.Remove(targetClient);
-                        }
-                        catch (Exception ex)
-                        {
-                            ChatTextBox.AppendText($"[Server Error]: Failed to kick {targetName}. Reason: {ex.Message}" + Environment.NewLine);
-                        }
-                    }
-                    else
-                    {
-                        ChatTextBox.AppendText($"[Server]: User '{targetName}' not found." + Environment.NewLine);
-                    }
-                    TypeTextBox.Clear();
-                    return;
-                }
-                else
-                {
-                    // Normal message broadcast
-                    ChatTextBox.AppendText($"[Server]: {message}" + Environment.NewLine);
-                    server.SendToAll($"[Server]: {message}", null);
-                }
-            }
-            else if (client != null && client.socket.Connected)
-            {
-                // No more username checks here —
-                // Server enforces Login/Register before allowing chat
-                client.SendString(message);
-            }
-
-            TypeTextBox.Clear(); // Clear message input box
-        }
-
-        private void StartGameButton_Click(object sender, EventArgs e)
-        {
-            // block if we’re not connected or not Player 1
-            if (client == null || !client.socket.Connected || client.clientSocket.PlayerNumber != 1)
-                return;
-
-            // Only if both players are connected (DB-backed)
-            if (!GameStateManager.BothPlayersInGame())
-            {
-                client.AddToChat("[Server]: Both players must be present to start the game.\n");
-                return;
-            }
-
-            // All checks passed — initiate game
-            client.SendString("!startgame");
-            StartGameButton.Enabled = false;
-            SetGameBoardInteractable(true);  // Local buttons light up once server confirms
-        }
-
-
-        public void TryEnableStartButton()
-        {
-            // Both players must be present AND client must be one of them
-            if (client != null &&
-                client.clientSocket.State == ClientState.Playing && client.clientSocket.PlayerNumber == 1 &&
-                !StartGameButton.Enabled)
-            {
-                StartGameButton.Enabled = true;
-            }
-        }
-
-        // Form loaded: setup TicTacToe UI buttons
+        // Form loaded: wire TicTacToe buttons + Enter-to-send
         private void Form1_Load(object sender, EventArgs e)
         {
             ticTacToe.buttons.Add(button1);
@@ -317,40 +65,283 @@ namespace Windows_Forms_Chat
 
             SetGameBoardInteractable(false);
 
-            // Listen for Enter key in the chat input field
+            // Enter key submits chat
             TypeTextBox.KeyDown += (s, ev) =>
             {
                 if (ev.KeyCode == Keys.Enter)
                 {
-                    SendButton_Click(SendButton, EventArgs.Empty);  // Simulate send
-                    ev.SuppressKeyPress = true;  // Prevent ding sound or new line
+                    SendButton_Click(SendButton, EventArgs.Empty);
+                    ev.SuppressKeyPress = true;
                 }
             };
         }
 
-        // Enables or disables all board buttons
+        // Checks if we can host or join (ensures we don’t have an active session)
+        public bool CanHostOrJoin() => server == null && client == null;
+        #endregion
+
+        #region Host / Join
+        // Handles Host button click
+        private void HostButton_Click(object sender, EventArgs e)
+        {
+            if (!CanHostOrJoin()) return;
+
+            try
+            {
+                int port = int.Parse(MyPortTextBox.Text);
+                server = TCPChatServer.createInstance(port, ChatTextBox);
+                if (server == null) throw new Exception("Invalid port or chat UI reference.");
+
+                server.SetupServer();
+
+                HostButton.Enabled = false;
+                JoinButton.Enabled = false;
+                SendButton.Enabled = true;
+            }
+            catch (SocketException ex)
+            {
+                server = null;
+                HostButton.Enabled = true;
+                JoinButton.Enabled = true;
+                SendButton.Enabled = true;
+                ChatTextBox.AppendText($"[Error]: Could not start server on port {MyPortTextBox.Text}.\n{ex.Message}" + Environment.NewLine);
+            }
+            catch (Exception ex)
+            {
+                server = null;
+                HostButton.Enabled = true;
+                JoinButton.Enabled = true;
+                SendButton.Enabled = true;
+                ChatTextBox.AppendText($"[Error]: {ex.Message}" + Environment.NewLine);
+            }
+        }
+
+        // Handles Join button click (connect to server)
+        private void JoinButton_Click(object sender, EventArgs e)
+        {
+            if (!CanHostOrJoin()) return;
+
+            try
+            {
+                int port = int.Parse(MyPortTextBox.Text);
+                int serverPort = int.Parse(serverPortTextBox.Text);
+
+                client = TCPChatClient.CreateInstance(port, serverPort, ServerIPTextBox.Text, ChatTextBox);
+                if (client == null) throw new Exception("Incorrect port value!");
+
+                client.OnConnectionFailed = () =>
+                {
+                    Invoke(new Action(() =>
+                    {
+                        ChatTextBox.AppendText("[Client]: Connection to server failed. Please try again." + Environment.NewLine);
+                        JoinButton.Enabled = true;
+                        HostButton.Enabled = true;
+                        SendButton.Enabled = true;
+                        client = null; // Reset for retry
+                    }));
+                };
+
+                client.ConnectToServer(JoinButton, HostButton, SendButton);
+            }
+            catch (Exception ex)
+            {
+                client = null;
+                ChatTextBox.AppendText("Error: " + ex.Message + Environment.NewLine);
+            }
+        }
+        #endregion
+
+        #region Chat Send + Host Command Dispatch
+        // Send typed message OR dispatch host commands when hosting.
+        private void SendButton_Click(object sender, EventArgs e)
+        {
+            string message = TypeTextBox.Text.Trim();
+            if (string.IsNullOrEmpty(message)) return;
+
+            if (server != null)
+            {
+                if (DispatchHostCommand(message))
+                {
+                    TypeTextBox.Clear();
+                    return; // handled by host handler
+                }
+
+                // Normal server broadcast
+                ChatTextBox.AppendText($"[Server]: {message}" + Environment.NewLine);
+                server.SendToAll($"[Server]: {message}", null);
+            }
+            else if (client != null && client.socket.Connected)
+            {
+                client.SendString(message);
+            }
+
+            TypeTextBox.Clear();
+        }
+
+        // Routes host-only commands to handlers. Returns true if handled.
+        private bool DispatchHostCommand(string msg)
+        {
+            if (msg.StartsWith("!mod ", StringComparison.OrdinalIgnoreCase))
+                return HandleHostToggleModerator(msg.Substring(5).Trim());
+
+            if (msg.Equals("!mods", StringComparison.OrdinalIgnoreCase))
+                return HandleHostListModerators();
+
+            if (msg.Equals("!dbtest", StringComparison.OrdinalIgnoreCase))
+                return HandleHostDbTest();
+
+            if (msg.StartsWith("!kick ", StringComparison.OrdinalIgnoreCase))
+                return HandleHostKick(msg.Substring(6).Trim());
+
+            return false;
+        }
+
+        // This handler method toggles the moderator flag for a client.
+        private bool HandleHostToggleModerator(string modTarget)
+        {
+            string targetLower = modTarget.ToLowerInvariant();
+            ClientSocket target = server.clientSockets.Find(c =>
+                !string.IsNullOrEmpty(c.Username) &&
+                c.Username.ToLowerInvariant() == targetLower);
+
+            if (target != null)
+            {
+                target.IsModerator = !target.IsModerator;
+                string status = target.IsModerator ? "promoted to moderator" : "demoted to regular user";
+
+                ChatTextBox.AppendText($"[Server -> {target.Username}]: You have been {status}" + Environment.NewLine);
+                string privateNote = $"[Server Notice]: You have been {status}";
+                try
+                {
+                    target.socket.Send(Encoding.UTF8.GetBytes(privateNote + Environment.NewLine));
+                }
+                catch { /* ignore transient send errors */ }
+            }
+            else
+            {
+                ChatTextBox.AppendText($"[Server]: User '{modTarget}' not found." + Environment.NewLine);
+            }
+            return true;
+        }
+
+        // This handler method shows the current list of moderators.
+        private bool HandleHostListModerators()
+        {
+            var sb = new StringBuilder("Current moderators:");
+            bool hasMods = false;
+            foreach (var c in server.clientSockets)
+            {
+                if (c.IsModerator)
+                {
+                    sb.Append(hasMods ? ", " : " ");
+                    sb.Append(c.Username);
+                    hasMods = true;
+                }
+            }
+            if (!hasMods) sb.Append(" (none)");
+            ChatTextBox.AppendText($"[Server]: {sb}" + Environment.NewLine);
+            return true;
+        }
+
+        // This handler method is used for quick DB connectivity check.
+        private bool HandleHostDbTest()
+        {
+            try
+            {
+                bool ok = DatabaseManager.TestConnection();
+                ChatTextBox.AppendText(ok
+                    ? "[Server]: Database connection successful." + Environment.NewLine
+                    : "[Server]: Database test failed." + Environment.NewLine);
+            }
+            catch (Exception ex)
+            {
+                ChatTextBox.AppendText("[Server Error]: Database test failed - " + ex.Message + Environment.NewLine);
+            }
+            return true;
+        }
+
+        // This handler method is used by the server to remove a user.
+        private bool HandleHostKick(string targetName)
+        {
+            string targetLower = targetName.ToLowerInvariant();
+
+            var targetClient = server.clientSockets.Find(c =>
+                !string.IsNullOrEmpty(c.Username) &&
+                c.Username.ToLowerInvariant() == targetLower);
+
+            if (targetClient != null)
+            {
+                try
+                {
+                    targetClient.socket.Send(Encoding.UTF8.GetBytes("You have been kicked by the Server.\n"));
+                    server.SendToAll($"[{targetClient.Username}] was kicked by [Server]\n", targetClient);
+                    ChatTextBox.AppendText($"[Server]: Kicked user {targetClient.Username}" + Environment.NewLine);
+
+                    targetClient.socket.Shutdown(SocketShutdown.Both);
+                    targetClient.socket.Close();
+                    server.clientSockets.Remove(targetClient);
+                }
+                catch (Exception ex)
+                {
+                    ChatTextBox.AppendText($"[Server Error]: Failed to kick {targetName}. Reason: {ex.Message}" + Environment.NewLine);
+                }
+            }
+            else
+            {
+                ChatTextBox.AppendText($"[Server]: User '{targetName}' not found." + Environment.NewLine);
+            }
+            return true;
+        }
+        #endregion
+
+        #region Game Start + Board Wiring
+        // Handles start game button.
+        private void StartGameButton_Click(object sender, EventArgs e)
+        {
+            // Must be connected as client and be Player 1 (X)
+            if (client == null || !client.socket.Connected || client.clientSocket.PlayerNumber != 1)
+                return;
+
+            // DB-backed presence check
+            if (!GameStateManager.BothPlayersInGame())
+            {
+                client.AddToChat("[Server]: Both players must be present to start the game.\n");
+                return;
+            }
+
+            client.SendString("!startgame");
+            StartGameButton.Enabled = false;
+            SetGameBoardInteractable(true); // server will send !yourturn/!waitturn
+        }
+
+        // Enables button if needed.
+        public void TryEnableStartButton()
+        {
+            // Only Player 1 can start
+            if (client != null &&
+                client.clientSocket.State == ClientState.Playing &&
+                client.clientSocket.PlayerNumber == 1 &&
+                !StartGameButton.Enabled)
+            {
+                StartGameButton.Enabled = true;
+            }
+        }
+
+        // Enable/disable all board buttons + color
         public void SetGameBoardInteractable(bool isEnabled)
         {
             foreach (var btn in ticTacToe.buttons)
             {
                 btn.Enabled = isEnabled;
-                if (isEnabled)
-                {
-                    btn.BackColor = Color.Violet;
-                }
-                else
-                {
-                    btn.BackColor = Color.Gray;
-                }
+                btn.BackColor = isEnabled ? Color.Violet : Color.Gray;
             }
         }
 
-        // Shared method for trying a TicTacToe move
+        // Attempt a move (0-8); server validates legality/turn
         private void AttemptMove(int i)
         {
             if (ticTacToe.myTurn && client != null && client.socket.Connected)
             {
-                // Send move to server instead of applying locally
                 client.SendString($"!move {i}");
             }
         }
@@ -366,4 +357,5 @@ namespace Windows_Forms_Chat
         private void button8_Click(object sender, EventArgs e) => AttemptMove(7);
         private void button9_Click(object sender, EventArgs e) => AttemptMove(8);
     }
+    #endregion
 }
