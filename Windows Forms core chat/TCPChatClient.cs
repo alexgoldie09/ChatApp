@@ -248,7 +248,7 @@ namespace Windows_Forms_Chat
                 clientSocket.State = ClientState.Playing;
                 clientSocket.PlayerNumber = 1;
                 UI(() => form.ticTacToe.playerTileType = TileType.cross);
-                AddToChat("[Client]: You joined Tic-Tac-Toe as Player 1.");
+                AddToChat("[Client]: You joined Tic-Tac-Toe as Player 1 (X).");
                 UI(() => form.TryEnableStartButton());
             }
             else if (norm.StartsWith("!player2", StringComparison.OrdinalIgnoreCase))
@@ -257,7 +257,7 @@ namespace Windows_Forms_Chat
                 clientSocket.State = ClientState.Playing;
                 clientSocket.PlayerNumber = 2;
                 UI(() => form.ticTacToe.playerTileType = TileType.naught);
-                AddToChat("[Client]: You joined Tic-Tac-Toe as Player 2.");
+                AddToChat("[Client]: You joined Tic-Tac-Toe as Player 2 (O).");
                 UI(() => form.TryEnableStartButton());
             }
 

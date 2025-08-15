@@ -247,5 +247,68 @@ namespace Windows_Forms_Chat
                 return false;
             }
         }
+
+        public static void IncrementWins(string username)
+        {
+            using (var conn = new SQLiteConnection(connectionString))
+            {
+                conn.Open();
+                using (var cmd = new SQLiteCommand("UPDATE Users SET Wins = Wins + 1 WHERE Username = @u COLLATE NOCASE", conn))
+                {
+                    cmd.Parameters.AddWithValue("@u", username.Trim());
+                    cmd.ExecuteNonQuery();
+                }
+            }
+        }
+
+        public static void IncrementLosses(string username)
+        {
+            using (var conn = new SQLiteConnection(connectionString))
+            {
+                conn.Open();
+                using (var cmd = new SQLiteCommand("UPDATE Users SET Losses = Losses + 1 WHERE Username = @u COLLATE NOCASE", conn))
+                {
+                    cmd.Parameters.AddWithValue("@u", username.Trim());
+                    cmd.ExecuteNonQuery();
+                }
+            }
+        }
+
+        public static void IncrementDraws(string username)
+        {
+            using (var conn = new SQLiteConnection(connectionString))
+            {
+                conn.Open();
+                using (var cmd = new SQLiteCommand("UPDATE Users SET Draws = Draws + 1 WHERE Username = @u COLLATE NOCASE", conn))
+                {
+                    cmd.Parameters.AddWithValue("@u", username.Trim());
+                    cmd.ExecuteNonQuery();
+                }
+            }
+        }
+
+        public static (int wins, int losses, int draws) GetStats(string username)
+        {
+            using (var conn = new SQLiteConnection(connectionString))
+            {
+                conn.Open();
+                using (var cmd = new SQLiteCommand("SELECT Wins, Losses, Draws FROM Users WHERE Username = @u COLLATE NOCASE", conn))
+                {
+                    cmd.Parameters.AddWithValue("@u", username.Trim());
+                    using (var r = cmd.ExecuteReader())
+                    {
+                        if (r.Read())
+                        {
+                            int w = r.IsDBNull(0) ? 0 : r.GetInt32(0);
+                            int l = r.IsDBNull(1) ? 0 : r.GetInt32(1);
+                            int d = r.IsDBNull(2) ? 0 : r.GetInt32(2);
+                            return (w, l, d);
+                        }
+                    }
+                }
+            }
+            return (0, 0, 0);
+        }
+
     }
 }

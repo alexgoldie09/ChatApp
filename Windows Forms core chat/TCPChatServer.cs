@@ -909,52 +909,93 @@ namespace Windows_Forms_Chat
             }
             else
             {
+                // Figure out outcome text AND update database scores
+                string p1 = GameStateManager.GetPlayer1(); // Player 1 is X
+                string p2 = GameStateManager.GetPlayer2(); // Player 2 is O
+
+                // Private result lines to players with their records
+                var p1Sock = clientSockets.Find(c => c.Username == p1);
+                var p2Sock = clientSockets.Find(c => c.Username == p2);
+
                 // Build a precise end message (covers draw explicitly)
                 string endMsg;
                 switch (result)
                 {
-                    case GameState.crossWins: endMsg = "X wins!"; break;
-                    case GameState.naughtWins: endMsg = "O wins!"; break;
-                    case GameState.draw: endMsg = "It's a draw!"; break;
-                    default: endMsg = "No results."; break;
+                    case GameState.crossWins:
+                        endMsg = "X wins!";
+                        if (!string.IsNullOrEmpty(p1)) DatabaseManager.IncrementWins(p1);
+                        if (!string.IsNullOrEmpty(p2)) DatabaseManager.IncrementLosses(p2);
+                        break;
+
+                    case GameState.naughtWins:
+                        endMsg = "O wins!";
+                        if (!string.IsNullOrEmpty(p2)) DatabaseManager.IncrementWins(p2);
+                        if (!string.IsNullOrEmpty(p1)) DatabaseManager.IncrementLosses(p1);
+                        break;
+
+                    case GameState.draw:
+                        endMsg = "It's a draw!";
+                        if (!string.IsNullOrEmpty(p1)) DatabaseManager.IncrementDraws(p1);
+                        if (!string.IsNullOrEmpty(p2)) DatabaseManager.IncrementDraws(p2);
+                        break;
+
+                    default:
+                        endMsg = "No results.";
+                        break;
                 }
 
-                // capture players BEFORE reset so we know who to pop out of Playing
-                string p1 = GameStateManager.GetPlayer1();
-                string p2 = GameStateManager.GetPlayer2();
+                // Get fresh records for both players (safe if either is null)
+                var p1Stats = string.IsNullOrEmpty(p1) ? (0, 0, 0) : DatabaseManager.GetStats(p1);
+                var p2Stats = string.IsNullOrEmpty(p2) ? (0, 0, 0) : DatabaseManager.GetStats(p2);
 
+                if (p1Sock != null)
+                {
+                    string you =
+                        result == GameState.crossWins ? "You won!" :
+                        result == GameState.naughtWins ? "You lost." :
+                        result == GameState.draw ? "Draw." : "Game over.";
+                    SendAndResume(p1Sock, $"[Result]: {you} Your record: {p1Stats.Item1} wins/{p1Stats.Item2} losses/{p1Stats.Item3} draws.\n");
+                }
+                if (p2Sock != null)
+                {
+                    string you =
+                        result == GameState.naughtWins ? "You won!" :
+                        result == GameState.crossWins ? "You lost." :
+                        result == GameState.draw ? "Draw." : "Game over.";
+                    SendAndResume(p2Sock, $"[Result]: {you} Your record: {p2Stats.Item1} wins/{p2Stats.Item2} losses/{p2Stats.Item3} draws.\n");
+                }
+
+                // Inform room and clients with detailed results
                 SendToAll($"[Game Over]: {endMsg}\n", null);
                 SendToAll("!resetboard\n", null);
 
-                // Server logs
+                // Server log (also include both records)
                 AddToChat($"[Game Over]: {endMsg}");
+                if (!string.IsNullOrEmpty(p1)) AddToChat($"[Record] {p1}: {p1Stats.Item1} wins/{p1Stats.Item2} losses/{p1Stats.Item3} draws");
+                if (!string.IsNullOrEmpty(p2)) AddToChat($"[Record] {p2}: {p2Stats.Item1} wins/{p2Stats.Item2} losses/{p2Stats.Item3} draws");
                 AddToChat("[Server]: Game finished. Resetting board and returning players to lobby.");
 
-                // Update server UI board
+                // Update server UI board (gray idle)
                 UI(() =>
                 {
                     var f = GetForm(); if (f == null) return;
                     f.ticTacToe.ResetBoard();
                     f.SetGameBoardInteractable(false);
-                    // back to idle = gray
                     foreach (var btn in f.ticTacToe.buttons) btn.BackColor = System.Drawing.Color.Gray;
                 });
 
-                // move clients out of Playing -> Chatting
+                // Drop both back to Chatting (your existing pattern)
                 foreach (var c in clientSockets)
                 {
-                    if (!string.IsNullOrEmpty(c.Username) &&
-                        (c.Username == p1 || c.Username == p2))
+                    if (!string.IsNullOrEmpty(c.Username) && (c.Username == p1 || c.Username == p2))
                     {
                         c.State = ClientState.Chatting;
                         c.PlayerNumber = 0;
-                        // tell the client to update its local state/UI
                         SendAndResume(c, "!leavegame\n");
                     }
                 }
 
-                // Reset server mirror and DB
-                serverBoard.ResetBoard();
+                // Reset central state
                 GameStateManager.ResetGame();
             }
         }
