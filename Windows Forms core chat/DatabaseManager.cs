@@ -19,6 +19,7 @@
  */
 
 using System;
+using System.Collections.Generic;
 using System.Data.SQLite;
 using System.IO;
 using System.Text.RegularExpressions;
@@ -310,5 +311,31 @@ namespace Windows_Forms_Chat
             return (0, 0, 0);
         }
 
+        // Get all player scores sorted by Wins (desc) then Draws (desc)
+        public static List<(string Username, int Wins, int Losses, int Draws)> GetAllScores()
+        {
+            var scores = new List<(string Username, int Wins, int Losses, int Draws)>();
+
+            using (var conn = new SQLiteConnection(connectionString))
+            {
+                conn.Open();
+                string sql = "SELECT Username, Wins, Losses, Draws FROM Users ORDER BY Wins DESC, Draws DESC";
+                using (var cmd = new SQLiteCommand(sql, conn))
+                using (var reader = cmd.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        scores.Add((
+                            reader.GetString(0),
+                            reader.GetInt32(1),
+                            reader.GetInt32(2),
+                            reader.GetInt32(3)
+                        ));
+                    }
+                }
+            }
+
+            return scores;
+        }
     }
 }

@@ -60,6 +60,7 @@ namespace Windows_Forms_Chat
         public Form1()
         {
             InitializeComponent();
+            ChatTextBox.Font = new Font("Consolas", ChatTextBox.Font.Size);
         }
 
         // Checks if we can host or join (ensures we don’t have an active session)

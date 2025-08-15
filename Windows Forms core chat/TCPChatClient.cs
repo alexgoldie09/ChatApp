@@ -206,8 +206,9 @@ namespace Windows_Forms_Chat
             Array.Copy(currentClientSocket.buffer, recBuf, received);
             string text = Encoding.UTF8.GetString(recBuf);
 
-            // Normalize once
-            string norm = text.Replace("\r\n", "\n").Trim();
+            // Keep CRLF for WinForms; only trim the very end if you must
+            string norm = text.Replace("\r\n", Environment.NewLine)
+                              .TrimEnd('\r', '\n');   // <- not full Trim()
 
             // Small helper for UI invokes
             var form = chatTextBox.FindForm() as Form1;

@@ -206,13 +206,14 @@ namespace Windows_Forms_Chat
                     switch (cmd)
                     {
                         case "!user": HandleRename(currentClientSocket, args); break;
-                        case "!commands": SendAndResume(currentClientSocket, "Commands: !commands !about !user !who !whisper !roll !join !kick !exit\n"); break;
+                        case "!commands": SendAndResume(currentClientSocket, "[Server]: Commands - !commands !about !user !who !whisper !roll !join !scores !kick !exit\n"); break;
                         case "!about": SendAndResume(currentClientSocket, "Chat Server v1.0" + Environment.NewLine + "Created by: Alexander Goldberg" + Environment.NewLine + "Purpose: Educational TCP Chat System"); break;
                         case "!who": HandleWho(currentClientSocket); break;
                         case "!roll": HandleRoll(currentClientSocket, args); break;
                         case "!whisper": HandleWhisper(currentClientSocket, args); break;
                         case "!kick": HandleKick(currentClientSocket, args); break;
                         case "!join": HandleJoinGame(currentClientSocket); break;
+                        case "!scores": HandleScores(currentClientSocket); break;
                         case "!exit": HandleDisconnect(currentClientSocket, $"[Server]: {currentClientSocket.Username} disconnected via !exit\n"); return;
                         default: HandleStandardMessage(currentClientSocket, text); break;
                     }
@@ -465,6 +466,25 @@ namespace Windows_Forms_Chat
             {
                 SendAndResume(sender, $"[Server]: User \"{targetUsername}\" not found.\n");
             }
+        }
+
+        private void HandleScores(ClientSocket client)
+        {
+            var scores = DatabaseManager.GetAllScores();
+            var sb = new StringBuilder();
+
+            sb.AppendLine("== Tic-Tac-Toe Scores ==");
+            sb.AppendLine(" #  Username            W   L   D");
+
+            int rank = 1;
+            foreach (var s in scores)
+            {
+                sb.AppendLine($"{rank,2}  {s.Username,-18}{s.Wins,3}{s.Losses,4}{s.Draws,4}");
+                rank++;
+            }
+
+            SendAndResume(client, sb.ToString());
+            AddToChat("[Server]: Sent scores to " + client.Username);
         }
 
         private void HandleKick(ClientSocket sender, string targetName)
