@@ -1,21 +1,16 @@
 /*
  * Program.cs
- * ----------
- * This is the main entry point for the Windows Forms Chat application.
- * It initializes the application settings such as DPI mode and rendering styles,
- * and then launches the main chat window via `Form1`.
+ * ----------------------------------------------------------
+ * Main entry point for the Windows Forms Chat + Tic-Tac-Toe app.
  *
  * Purpose:
- * - Set up and start the Windows Forms application loop.
- * - Ensure modern rendering and scaling settings are applied.
- * - Instantiate the main form (`Form1`) which drives the entire GUI and chat logic.
- *
+ * - Start the WinForms message loop safely.
+ * - Apply modern DPI / rendering (when available).
+ * - Install global exception handlers so background errors don't
+ *   crash the process silently.
  */
 
 using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace Windows_Forms_Chat
@@ -23,19 +18,58 @@ namespace Windows_Forms_Chat
     static class Program
     {
         /// <summary>
-        ///  The main entry point for the application.
+        /// The main entry point for the application.
         /// </summary>
         [STAThread]
         static void Main()
         {
-            // Sets high DPI awareness for better scaling on high-resolution displays.
-            Application.SetHighDpiMode(HighDpiMode.SystemAware);
-            // Enables Windows theme and visual styles for controls.
+#if NET5_0_OR_GREATER
+            // .NET 5+ WinForms template helper sets DPI & styles.
+            ApplicationConfiguration.Initialize();
+#else
+            // .NET Framework / older WinForms
+            try
+            {
+                // Available only on .NET Core/5+; keep in try just in case.
+                // If you're firmly on .NET Framework, you can remove this call.
+                Application.SetHighDpiMode((HighDpiMode)1 /* SystemAware */);
+            }
+            catch { /* ignore if unavailable */ }
+
             Application.EnableVisualStyles();
-            // Uses the default GDI+ text rendering for compatibility.
             Application.SetCompatibleTextRenderingDefault(false);
-            // Starts the application by opening the Form1 chat window.
+#endif
+
+            // Install global exception handlers so background exceptions
+            // (socket callbacks, etc.) won't tear down the process silently.
+            Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
+            Application.ThreadException += (s, e) =>
+            {
+                try
+                {
+                    MessageBox.Show(
+                        e.Exception.ToString(),
+                        "UI Thread Exception",
+                        MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+                catch { /* last resort guard */ }
+            };
+
+            AppDomain.CurrentDomain.UnhandledException += (s, e) =>
+            {
+                try
+                {
+                    var ex = e.ExceptionObject as Exception;
+                    MessageBox.Show(
+                        ex?.ToString() ?? "Unknown non-UI exception",
+                        "Non-UI Thread Exception",
+                        MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+                catch { /* last resort guard */ }
+            };
+
             Application.Run(new Form1());
         }
     }
 }
+

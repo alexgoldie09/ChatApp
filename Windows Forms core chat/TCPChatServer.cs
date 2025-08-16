@@ -45,8 +45,9 @@ namespace Windows_Forms_Chat
     {
         // Main listening socket
         public Socket serverSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-        // All connected clients
+        // All connected clients (guarded by clientsLock for thread-safety)
         public List<ClientSocket> clientSockets = new List<ClientSocket>();
+        private readonly object clientsLock = new object();
 
         #region Setup & Lifecycle
         // Creates and returns a TCPChatServer instance if inputs are valid.
@@ -129,12 +130,14 @@ namespace Windows_Forms_Chat
                 return;
             }
 
-            ClientSocket newClientSocket = new ClientSocket
-            {
-                socket = joiningSocket
-            };
+            ClientSocket newClientSocket = new ClientSocket();
+            newClientSocket.socket = joiningSocket;
 
-            clientSockets.Add(newClientSocket);
+            lock (clientsLock)
+            {
+                clientSockets.Add(newClientSocket);
+            }
+
             joiningSocket.BeginReceive(newClientSocket.buffer, 0, ClientSocket.BUFFER_SIZE, SocketFlags.None, ReceiveCallback, newClientSocket);
             AddToChat("[Server]: Client connected, waiting for request...");
 
@@ -148,12 +151,15 @@ namespace Windows_Forms_Chat
             ClientSocket currentClientSocket = (ClientSocket)AR.AsyncState;
 
             // Guard: client already disconnected/removed
-            if (currentClientSocket == null ||
-                currentClientSocket.buffer == null ||
-                !clientSockets.Contains(currentClientSocket))
+            bool stillConnected;
+            lock (clientsLock)
             {
-                return;
+                stillConnected = currentClientSocket != null &&
+                                 currentClientSocket.buffer != null &&
+                                 clientSockets.Contains(currentClientSocket);
             }
+            if (!stillConnected) return;
+
 
             int received;
 
@@ -168,6 +174,12 @@ namespace Windows_Forms_Chat
             }
             catch (ObjectDisposedException)
             {
+                return;
+            }
+
+            if (received == 0)
+            {
+                HandleDisconnect(currentClientSocket, "[Server]: Client disconnected.\n");
                 return;
             }
 
@@ -248,10 +260,13 @@ namespace Windows_Forms_Chat
             }
 
             // Resume receive
-            if (clientSockets.Contains(currentClientSocket) && currentClientSocket.socket.Connected)
+            lock (clientsLock)
             {
-                currentClientSocket.socket.BeginReceive(currentClientSocket.buffer, 0, ClientSocket.BUFFER_SIZE,
-                    SocketFlags.None, ReceiveCallback, currentClientSocket);
+                if (clientSockets.Contains(currentClientSocket) && currentClientSocket.socket.Connected)
+                {
+                    currentClientSocket.socket.BeginReceive(currentClientSocket.buffer, 0,
+                        ClientSocket.BUFFER_SIZE, SocketFlags.None, ReceiveCallback, currentClientSocket);
+                }
             }
         }
 
@@ -262,12 +277,11 @@ namespace Windows_Forms_Chat
             string payload = EnsureProtocolNewline(str);
 
             byte[] data = Encoding.UTF8.GetBytes(payload);
-            List<ClientSocket> disconnectedClients = new List<ClientSocket>();
+            List<ClientSocket> disconnected = new List<ClientSocket>();
 
-            foreach (ClientSocket c in clientSockets.ToArray()) // snapshot for safety
+            foreach (ClientSocket c in SnapshotClients())
             {
-                if (from != null && c == from)
-                    continue; // skip sender if needed
+                if (from != null && c == from) continue;
 
                 try
                 {
@@ -277,21 +291,14 @@ namespace Windows_Forms_Chat
                     }
                     else
                     {
-                        disconnectedClients.Add(c);
+                        disconnected.Add(c);
                     }
                 }
-                catch (SocketException)
-                {
-                    disconnectedClients.Add(c); // only this client fails
-                }
-                catch (ObjectDisposedException)
-                {
-                    disconnectedClients.Add(c);
-                }
+                catch (SocketException) { disconnected.Add(c); }
+                catch (ObjectDisposedException) { disconnected.Add(c); }
             }
 
-            // Remove only the broken ones
-            foreach (var dc in disconnectedClients)
+            foreach (var dc in disconnected)
             {
                 HandleDisconnect(dc, "[Server]: Client removed due to send failure\n");
             }
@@ -653,25 +660,32 @@ namespace Windows_Forms_Chat
         {
             if (client == null) return;
 
-            if (!clientSockets.Contains(client))
-                return;
+            // membership check under lock
+            lock (clientsLock)
+            {
+                if (!clientSockets.Contains(client))
+                    return;
+            }
 
+            // Try to shutdown/close the socket (outside lock)
             try
             {
-                bool closed = false;
                 if (client.socket != null && client.socket.Connected)
                 {
-                    // Prefer close (graceful enough). Shutdown can throw if already half-closed
-                    if (!closed)
-                    {
-                        closed = true;
-                        client.socket?.Close();
-                    }
+                    try { client.socket.Shutdown(SocketShutdown.Both); } catch { }
                 }
             }
             catch { }
+            try { client.socket?.Close(); } catch { }
 
-            clientSockets.Remove(client);
+            // Now remove from the list under lock
+            lock (clientsLock)
+            {
+                // Double-check in case another thread removed it after our first check
+                int idx = clientSockets.IndexOf(client);
+                if (idx >= 0) clientSockets.RemoveAt(idx);
+            }
+
             client.buffer = null;
 
             if (client.State == ClientState.Playing)
@@ -989,32 +1003,29 @@ namespace Windows_Forms_Chat
         // Check if username is already taken by a connected client
         private bool IsUsernameTaken(string proposedUsername)
         {
-            string lower = (proposedUsername ?? "").ToLowerInvariant();
-            foreach (var client in clientSockets)
+            string lower = proposedUsername.ToLowerInvariant();
+            foreach (var client in SnapshotClients())
             {
                 if (!string.IsNullOrEmpty(client.Username) &&
                     client.Username.ToLowerInvariant() == lower)
-                {
                     return true;
-                }
             }
             return false;
         }
 
-        // Check if user is already connected to server
+        // Checks is user is already connected
         private bool IsUserAlreadyConnected(string username)
         {
-            string lower = (username ?? "").ToLowerInvariant();
-            foreach (var c in clientSockets)
+            string lower = username.ToLowerInvariant();
+            foreach (var c in SnapshotClients())
             {
                 if (!string.IsNullOrEmpty(c.Username) &&
                     c.Username.ToLowerInvariant() == lower)
-                {
                     return true;
-                }
             }
             return false;
         }
+
 
         // Split username + password (for login/register)
         private (string user, string pass)? ParseCredentials(string input)
@@ -1024,8 +1035,14 @@ namespace Windows_Forms_Chat
                 return (parts[0].Trim(), parts[1].Trim());
             return null;
         }
+        // Snap shots and locks client array for safe threading
+        private ClientSocket[] SnapshotClients()
+        {
+            lock (clientsLock) return clientSockets.ToArray();
+        }
+
         #endregion
 
-        
+
     }
 }
